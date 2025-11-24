@@ -656,27 +656,74 @@
 (define ELECTRON_RADIUS (/ CELL_SIZE 4))
 (define (branch->pict brnch)
   ;; [x] pie chart for probability.
-  ;; [ ] line with arrow arrow from center to edge for phase direction.
-  ;; [ ] line from center to half-radius with no arrowhead for spin direction (xz projection of bloch sphere).
-  ;; [ ] arrow for velocity direction, outside the circle.
-  ;; [ ] center of pict should be center of circle, even though velocity arrow goes outside.
+  ;; [x] line with arrow arrow from center to edge for phase direction.
+  ;; [x] line from center to half-radius with no arrowhead for spin direction (xz projection of bloch sphere).
+  ;; [x] arrow for velocity direction, outside the circle.
+  ;; [x] center of pict should be center of circle, even though velocity arrow goes outside.
   (define definite-spin-angle (get-definite-spin-angle brnch))
   (define p (branch-probability brnch))
   (define p-angle (* p 2 pi))
+  (define phase-angle (if (zero? p) 0 (angle (branch-amplitude brnch))))
+  
+  (define base-circle
+    (cc-superimpose
+     (disk (* 2 ELECTRON_RADIUS) #:color "white")
+     (if (zero? p) (blank) (sector ELECTRON_RADIUS 0 p-angle))
+     (circle (* 2 ELECTRON_RADIUS))))
+  
+  ;; create lines that emanate from the center  
+  ;; use same inset approach as velocity arrow
+  ;; negate angles because pict has +y downward but our angles assume +y upward
+  (define phase-arrow-line (colorize (hline ELECTRON_RADIUS 2) "blue"))
+  (define phase-arrow
+    (rotate
+     (inset phase-arrow-line (/ ELECTRON_RADIUS 2) 0 (- (/ ELECTRON_RADIUS 2)) 0)
+     phase-angle))
+  
+  (define spin-line-line (colorize (hline (/ ELECTRON_RADIUS 2) 2) "red"))
+  (define spin-line
+    (rotate
+     (inset spin-line-line (/ ELECTRON_RADIUS 4) 0 (- (/ ELECTRON_RADIUS 4)) 0)
+     definite-spin-angle))
+  
+  (define v (branch-velocity brnch))
+  (define velocity-arrow
+    (if (vec-zero? v)
+        (blank)
+        (let* (;; simulation coords: +x right, +y up
+               ;; pict coords: +x right, +y down
+               ;; so negate y when computing angle
+               [vel-angle (atan (- (vec-y v)) (vec-x v))]
+               [arrow-line-length (* 1.5 ELECTRON_RADIUS)]
+               [arrowhead-size (/ CELL_SIZE 10)]
+               [total-length (+ arrow-line-length arrowhead-size)]
+               ;; create arrow
+               [arrow-pict (hc-append (hline arrow-line-length 2)
+                                      (arrowhead arrowhead-size 0))])
+          ;; shift arrow so its tail is at center, then rotate
+          (rotate
+           (inset arrow-pict (/ total-length 2) 0 (- (/ total-length 2)) 0)
+           (- vel-angle)))))
+  
+  ;; layer velocity behind circle, then phase and spin on top
   (cc-superimpose
-   (sector ELECTRON_RADIUS 0 p-angle)
-   (circle (* 2 ELECTRON_RADIUS))))
+   velocity-arrow
+   base-circle
+   phase-arrow
+   spin-line))
 
 ;; Branch -> Real
+;; Returns the angle (in radians) representing the spin direction
+;; as the xz-plane projection of the Bloch sphere
 (define (get-definite-spin-angle brnch)
   ;; TODO update for polarization
   ;; xz plane projection of location on bloch sphere
-  (define s (branch-state s))
+  (define s (branch-state brnch))
   (define up (vec-x s))
   (define down (vec-y s))
   ;; coordinates on the bloch sphere
   (define x (* 2 (real-part (* (conjugate up) down))))
-  (define z (real-part (- (* (conjugate up) up) (* conjugate down) down)))
+  (define z (real-part (- (* (conjugate up) up) (* (conjugate down) down))))
   (angle (make-rectangular x z)))
 
 (define (sector radius start-angle end-angle #:color [color "gray"])
@@ -699,8 +746,10 @@
       (* 2 radius)
       (* 2 radius)))
 
-#;
-(show-pict (branch->pict (branch (vec 0 0)
-                                 (vec 1 0)
-                                 SPIN_UP
-                                 1/rad2)))
+
+(show-pict (cc-superimpose
+            (blank 100 100)
+            (branch->pict (branch (vec 0 0)
+                                  (vec 0 -1)
+                                  SPIN_RIGHT
+                                  (make-rectangular 0 1/rad2)))))
