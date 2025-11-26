@@ -11,7 +11,6 @@
          "./private/vec.rkt"
          "./private/spin-state.rkt")
 
-#;
 (module+ main
   (define double-stern-gerlach
     (experiment (branch (vec 0 0) (vec 1 0) SPIN_UP 1)
@@ -20,7 +19,26 @@
                       (vec 2 2) (detector "L")
                       (vec 4 2) (detector "D")
                       (vec 6 0) (detector "U"))))
-  (experiment-run/big-bang double-stern-gerlach))
+  (define double-slit
+    (experiment (branch (vec 0 0) (vec 1 0) SPIN_UP 1)
+                (hash (vec 2 0) (splitter (vec 1 -1))
+                      (vec 4 0) (splitter (vec 1 -1))
+                      (vec 2 2) (splitter (vec 1 -1))
+                      (vec 4 2) (joiner)
+                      (vec 2 6) (detector "A")
+                      (vec 8 2) (detector "B")
+                      (vec 8 0) (detector "C"))))
+  (define double-slit-partial-destructive
+    (experiment (branch (vec 0 0) (vec 1 0) SPIN_UP 1)
+                (hash (vec 2 0) (splitter (vec 1 -1))
+                      (vec 4 0) (splitter (vec 1 -1))
+                      (vec 2 2) (splitter (vec 1 -1))
+                      (vec 4 1) (glass 0+1i)
+                      (vec 4 2) (joiner)
+                      (vec 2 6) (detector "A")
+                      (vec 8 2) (detector "B")
+                      (vec 8 0) (detector "C"))))
+  (experiment-run/big-bang double-slit-partial-destructive))
 
 ;; A System is a
 (struct system [experiment particle] #:transparent)
@@ -87,8 +105,11 @@
 ;; Breaks coherence.
 
 ;; A Splitter is a
-(struct splitter [] #:transparent)
-;; Represents a beam splitter, which randomly sends the particle down or right.
+(struct splitter [norm] #:transparent)
+;; where
+;; norm is a Vec representing the normal of the splitter's surface. Can only be diagonal. Not necessarily a unit vector.
+;; Represents a beam splitter, which splits the branch into two:
+;; one where the particle passes through and one where the particle gets deflected according to the normal.
 ;; Maintains coherence.
 
 ;; A Joiner is a
@@ -396,27 +417,27 @@
 (define (handle-splitter sys)
   (handle-component sys
                     splitter?
-                    (lambda (sys pos cmp brnch)
-                      (if (equal? (vec 1 0) (branch-velocity brnch))
-                          (list brnch
-                                (struct-copy
-                                 branch brnch
-                                 [velocity (vec 0 1)]
-                                 ; +90 degree phase shift
-                                 [amplitude (* 0+1i (branch-amplitude brnch))]))
-                          (list brnch)))))
+                    (lambda (sys pos spl brnch)
+                      (define v (branch-velocity brnch))
+                      (define n (splitter-norm spl))
+                      (define v^ (vec-map (vec-reflect v n)
+                                          exact-round))
+                      (list brnch
+                            (struct-copy
+                             branch brnch
+                             [velocity v^]
+                             ; +90 degree phase shift
+                             [amplitude (* 0+1i (branch-amplitude brnch))])))))
 
 (module+ test
-  (check-equal? (handle-splitter (system example-experiment (list example-branch)))
-                (system example-experiment (list example-branch)))
-  (let ([exp (experiment example-branch (hash (vec 1 0) (splitter)))]
+  (let ([exp (experiment example-branch (hash (vec 1 0) (splitter (vec 1 1))))]
         [brnch (branch (vec 1 0) (vec 1 0) SPIN_UP 1)])
     (check-equal? (handle-splitter (system exp (list brnch)))
                   (system exp
                           (list brnch
                                 (struct-copy
                                  branch brnch
-                                 [velocity (vec 0 1)]
+                                 [velocity (vec 0 -1)]
                                  [amplitude 0+1i]))))))
 
 (define (handle-joiner sys)
@@ -579,7 +600,7 @@
     [on-tick (lambda (sys) sys)]
     [on-draw (compose freeze pict->bitmap system->pict)]))
 
-(define CELL_SIZE 50)
+(define CELL_SIZE 100)
 
 ;; System -> Pict
 ;; draw the system, with increasing y going up
@@ -638,10 +659,14 @@
                     (scale CELL_RECT
                            0.6)
                     #:mode 'preserve/max))]
-    [(splitter)
+    [(splitter (vec 1 1))
+     (shear (hline CELL_SIZE 1 #:segment 5) 0 1)]
+    [(splitter (vec 1 -1))
      (shear (hline CELL_SIZE 1 #:segment 5) 0 -1)]
+    [(splitter norm)
+     (error 'component->pict "unknown norm ~a" norm)]
     [(joiner)
-     (hc-append (hline CELL_SIZE 1) (arrowhead (/ CELL_SIZE 5) 0))]
+     (hc-append (hline (* CELL_SIZE 0.7) 1) (arrowhead (/ CELL_SIZE 5) 0))]
     [(mirror (vec 1 1))
      (shear (hline CELL_SIZE 1) 0 1)]
     [(mirror (vec 1 -1))
@@ -745,11 +770,3 @@
         (send dc set-pen old-pen))
       (* 2 radius)
       (* 2 radius)))
-
-
-(show-pict (cc-superimpose
-            (blank 100 100)
-            (branch->pict (branch (vec 0 0)
-                                  (vec 0 -1)
-                                  SPIN_RIGHT
-                                  (make-rectangular 0 1/rad2)))))
